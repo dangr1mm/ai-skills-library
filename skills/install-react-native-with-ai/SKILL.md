@@ -1,0 +1,212 @@
+---
+name: install-react-native-with-ai
+description: Installs @userflow-tech/react-native into an Expo or bare React Native app, including Expo Router and React Navigation. Default install is init(), identify() after sign-in, reset() on logout, UserflowProvider, and screen tracking. Use when someone wants to install Userflow in a React Native, Expo, Expo Router, or React Navigation app. Not for web apps or Userflow.js — those use install-with-ai.
+metadata:
+  author: userflow
+  version: "1.0"
+---
+
+# Userflow React Native Installation
+
+This skill installs `@userflow-tech/react-native` correctly and minimally. The install changes which users get identified, which directly affects the customer's Monthly Active User (MAU) count and bill — so follow the core rules below exactly.
+
+**AGENTS.md convention:** Append a "Userflow installation" section to the project's AGENTS.md recording: package manager, the file where `init()` lives, the file(s) where `identify()` and `reset()` live, where `UserflowProvider` and screen tracking are mounted, the client-token source, the `scheme_id`, and the user-ID field used. Update or append — never overwrite the file or unrelated sections.
+
+## Scope
+
+Install only, for a new or existing React Native codebase. The default install is `init()` + `identify()` + `reset()` + `UserflowProvider` + screen tracking. Verifying an existing install and recommending attributes are out of scope.
+
+If `package.json` has neither `react-native` nor `expo`, this is not a React Native app. Stop and use `install-with-ai`. Never install `userflow.js` here, and never install `@userflow-tech/react-native` into a web app.
+
+## Core Rules (non-negotiable — apply throughout)
+
+1. **Authenticated users only.** Call `identify()` only after sign-in, and again on launches where a user is already signed in. Call `reset()` on logout. Do not call `identifyAnonymous()` on a default install — anonymous users count toward MAU and can cause overages.
+2. **Keep it simple.** The default install is the five pieces in Scope. Babel plugin, `identifyAnonymous()`, `group()`, `track()`, identity verification, and an EU `serverEndpoint` are Advanced — add one only when the customer asks.
+3. **Native modules need a native rebuild.** A Metro reload does not link native modules or URL schemes. Expo Go cannot load this SDK. Use a development build (`npx expo run:ios` / `npx expo run:android`) or a prebuilt bare app.
+4. **Tokens.**
+   - The client token is `ct_...`, one per environment, from the dashboard (Settings → Environments). Wire it through the app's existing env config.
+   - An `esk_...` key is a backend secret. It must never appear in the app, the repo, or the chat.
+   - Never invent a token, a `scheme_id`, or a placeholder such as `YOUR_TOKEN` or `ct_...` left in source.
+   - `.npmrc` and `.yarnrc.yml` reference the literal `${NPM_TOKEN}`. Never write a real npm token into a file.
+5. **Never initialize twice.** If `@userflow-tech/react-native` is already initialized, point to that `init()` and stop. Do not add a second one.
+6. **No destructive or upgrade commands without an explicit yes.** That includes `expo prebuild --clean`, deleting `ios/` or `android/`, and upgrading Expo or React Native.
+7. **Ask, don't guess,** for the `scheme_id`, the client token, where sign-in and logout happen, and which field is the user id.
+
+After the package is installed, read `node_modules/@userflow-tech/react-native/README.md` and its `docs/` (especially `troubleshooting.md`, `deep-linking.md`, and `identity-verification.md`) and follow them. They match the installed version. Do not quote warning strings from memory; search logs for the `[Userflow]` prefix.
+
+---
+
+## Step 1 — Analyze the project
+
+Inspect before asking, and determine:
+
+| Read | Determine |
+|---|---|
+| `package.json` | Expo SDK and React Native versions; `expo-router` or `@react-navigation/native`; whether `@userflow-tech/react-native` or `userflow.js` is already installed; `react-native-safe-area-context`; a `test` script (Jest) |
+| Lockfile and `.yarnrc.yml` | npm, Yarn 2+, or pnpm. Yarn 2+ ignores `.npmrc` |
+| `app.json` / `app.config.*`, `ios/`, `android/`, `babel.config.js` | Expo or bare; an existing Userflow config plugin; an existing Babel plugin |
+| Root layout or `App.tsx`, and the auth code | Where `init()`, `identify()`, `reset()`, and `UserflowProvider` belong; the user-id field |
+
+Confirm once, naming the real stack — e.g. *"Expo SDK 57 with Expo Router; sign-in is `src/auth/signIn.ts`; the id is `user.id`. I'll init at startup and identify after sign-in. Correct?"* — then continue.
+
+No repository access: do not invent paths. Ask for the stack, auth entry points, and user-id field, or switch to the Developer Handoff Spec and stop.
+
+## Step 2 — npm access
+
+The package is private. Missing access looks like `404 Not Found`, not an authorization error.
+
+```bash
+npm view @userflow-tech/react-native version
+```
+
+On a 404, stop. Tell the customer to ask Userflow to add their npm user or org to the read-only `@userflow-tech` team, then create a granular read-only token limited to `@userflow-tech`. Continue only after `npm view` prints a version.
+
+Write the registry config if it is missing. Commit the file, never the token. `NPM_TOKEN` must be set in the developer shell, CI, and EAS (as a secret).
+
+npm or Yarn 1, `.npmrc` at the app root:
+
+```ini
+@userflow-tech:registry=https://registry.npmjs.org/
+//registry.npmjs.org/:_authToken=${NPM_TOKEN}
+```
+
+Yarn 2+, `.yarnrc.yml`:
+
+```yaml
+npmScopes:
+  userflow-tech:
+    npmRegistryServer: "https://registry.npmjs.org"
+    npmAuthToken: "${NPM_TOKEN}"
+```
+
+## Step 3 — Install the packages
+
+List every native module in the app's own `package.json`. Expo SDK 53 and bare React Native do not autolink packages that are only transitive dependencies.
+
+```bash
+# Expo
+npx expo install @userflow-tech/react-native @react-native-async-storage/async-storage react-native-view-shot@^5.0.0 react-native-webview
+
+# Bare React Native
+npm install @userflow-tech/react-native @react-native-async-storage/async-storage react-native-device-info react-native-view-shot react-native-webview
+cd ios && pod install
+```
+
+Use the app's package manager. On Expo SDK 54, unpinned `npx expo install react-native-view-shot` resolves 4.0.3, which does not satisfy `>=5.0.0`. Keep the `^5.0.0` pin. When `expo doctor` then reports a mismatch, add `"react-native-view-shot"` to `expo.install.exclude` in `package.json`.
+
+`react-native-device-info` is for bare React Native. Expo reads the app version from `expo-constants`.
+
+Add these only when the app needs them: `react-native-safe-area-context` (install it if no `SafeAreaProvider` exists), `@react-native-community/netinfo`, `expo-secure-store`.
+
+## Step 4 — Register the deep-link scheme
+
+Ask for the environment's `scheme_id`. It starts with `userflow-` (for example `userflow-v7twv2fw2ja2jaco7kesvowmem`). Reject an environment UUID and the app's own scheme.
+
+Expo, in `app.json` or `app.config.js`:
+
+```json
+["@userflow-tech/react-native", { "schemeId": "<scheme_id>" }]
+```
+
+Bare React Native: follow `docs/deep-linking.md` inside the installed package for the `Info.plist` and `AndroidManifest.xml` entries.
+
+## Step 5 — init, identify, reset
+
+```tsx
+import { Userflow } from '@userflow-tech/react-native';
+
+await Userflow.init({ clientToken }); // once per process; safe to call again with the same options
+await Userflow.identify(user.id, { name: user.name, email: user.email });
+```
+
+- `init` at startup, before `identify`. A second `init` with different options is ignored until the app restarts.
+- `identify` in the auth layer, after sign-in and on launches that already have a session. Await `init` first.
+- `reset` in the logout handler.
+- Read `clientToken` from the app's env config. One token per environment.
+
+## Step 6 — Mount the provider inside SafeAreaProvider
+
+Expo Router already provides `SafeAreaProvider` above the root layout. Mount the provider there:
+
+```tsx
+<UserflowProvider>
+  {/* screen tracker, step 7 */}
+  <Stack />
+</UserflowProvider>
+```
+
+React Navigation does not. Wrap the app yourself:
+
+```tsx
+<SafeAreaProvider>
+  <UserflowProvider>
+    {/* WithUserflowReactNavigation, step 7 */}
+    <NavigationContainer>{/* navigators */}</NavigationContainer>
+  </UserflowProvider>
+</SafeAreaProvider>
+```
+
+`UserflowProvider` can mount before `init` resolves. Put it once, near the top of the tree, inside `SafeAreaProvider`.
+
+## Step 7 — Screen tracking
+
+- **Expo Router:** render `UserflowExpoRouterScreenTracker` from `@userflow-tech/react-native/expo-router` inside the provider, and add `app/+native-intent.ts` that re-exports `redirectSystemPath` from that package. Without it, a pairing link shows "Unmatched Route".
+- **React Navigation:** wrap the navigator with `WithUserflowReactNavigation`.
+- **Anything else:** call `Userflow.updateScreen(name)` (or `useUserflowScreen`) when the screen changes.
+
+## Step 8 — Jest
+
+If the app has Jest, mock the SDK in the Jest setup file so tests do not load native modules. Copy the mock from the Jest section of the installed package README. Include the methods the app calls.
+
+## Step 9 — Verify
+
+You run:
+
+- The app's typecheck.
+- A bundle: `npx expo export --platform ios`, or `react-native bundle` for bare React Native.
+
+Then hand the customer the steps you cannot do:
+
+1. Rebuild and launch the native app. A Metro reload is not enough.
+2. Confirm the dev console has no `[Userflow]` setup warning. A complete install stays quiet.
+3. In the Builder, open Preview → "Pair a device" and scan the QR code. The app shows a "Preview mode" bar. Then press Preview.
+
+Search device logs for `[Userflow]` if any of those fail, and match the line to `docs/troubleshooting.md`.
+
+## Step 10 — Document
+
+Add or update the "Userflow installation" section in `AGENTS.md`, as described at the top. Never overwrite the rest of the file.
+
+---
+
+## Developer Handoff Spec
+
+Without repository access, do not write code. Generate `USERFLOW_RN_INSTALL_SPEC.md` containing: how to detect Expo vs bare and the router; the npm-access steps and the `.npmrc` / `.yarnrc.yml` snippets; the install commands; where `scheme_id` and `clientToken` come from; the `init` / `identify` / `reset` / provider / screen-tracking code with the customer's real user-id field named; the Jest mock note; the core rules; and the Step 9 checklist. The document must stand on its own.
+
+## Advanced — only when the customer asks
+
+- **Babel plugin** (`@userflow-tech/react-native/babel-plugin`). It stamps `nativeID` at build time so elements can be targeted without a `testID`. Jest runs `babel.config.js` too, so the plugin rewrites snapshots unless tests skip it. When the app has snapshot tests, gate it and remove `api.cache(true)` (`api.env` caches per environment; calling `api.cache(true)` first throws `Caching has already been configured`):
+
+  ```js
+  module.exports = function (api) {
+    const isTest = api.env('test');
+    return {
+      presets: ['babel-preset-expo'],
+      plugins: isTest ? [] : ['@userflow-tech/react-native/babel-plugin'],
+    };
+  };
+  ```
+
+  Then clear the Metro cache (`npx expo start -c`). Generated ids change when labels, sibling order, or file paths change, so codeless selectors have to be re-authored. Prefer `testID` unless the customer asked for the plugin.
+
+- **`identifyAnonymous()`.** Opt-in identification of signed-out users. They count toward MAU. Not a fallback for `identify()`. Requires the customer's explicit consent, and requires AsyncStorage to be linked.
+- **Identity verification.** Ask first. The signature is an HMAC-SHA256 of the user id, computed on the backend with the `esk_...` secret, and passed as `identify(id, attrs, { signature })`. Follow `docs/identity-verification.md`. The secret never ships in the app.
+- **`group()` and `track()`.** `group()` after `identify()`, with a real group id. `track()` only once a user is identified.
+- **EU environments.** Pass `serverEndpoint: 'https://e.eu.userflow.com'`. Pairing stays on the default host. Confirm the exact values in the installed README.
+
+## Reference
+
+- Installed `node_modules/@userflow-tech/react-native/README.md` — install, placement, API, Jest
+- Installed `docs/troubleshooting.md`, `docs/deep-linking.md`, `docs/identity-verification.md`
+- [Userflow.js Installation](https://help.userflow.com/docs/userflowjs-installation) — environments and the client token (the web SDK itself is a different install)
+- [Identity verification](https://help.userflow.com/docs/identity-verification) — HMAC-SHA256 `signature`, computed on the backend
